@@ -100,6 +100,8 @@ int main(void)
 	int		 	argc = 0;
 	char*		token;
 	int 		newCmdReady = 0;
+	int alphaValue1=0;
+	int alphaValue2=0;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -133,6 +135,13 @@ int main(void)
 	HAL_Delay(10);
 	HAL_UART_Transmit(&huart2, started, sizeof(started), HAL_MAX_DELAY);
 	HAL_UART_Transmit(&huart2, prompt, sizeof(prompt), HAL_MAX_DELAY);
+
+	//HAL_TIM_Base_Start(&htim1);
+
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -194,6 +203,9 @@ int main(void)
 			else if(strcmp(argv[0],"start")==0)
 			{
 				HAL_UART_Transmit(&huart2, powerOn, sizeof(powerOn), HAL_MAX_DELAY);
+				HAL_GPIO_WritePin(ISO_Reset_Pinout_GPIO_Port, ISO_Reset_Pinout_Pin, SET);
+				HAL_Delay(1);
+				HAL_GPIO_WritePin(ISO_Reset_Pinout_GPIO_Port, ISO_Reset_Pinout_Pin, RESET);
 			}
 
 
@@ -201,9 +213,9 @@ int main(void)
 			//=============================================================================================
 
 			else if(strcmp(argv[0],"stop")==0)
-						{
-							HAL_UART_Transmit(&huart2, powerOff, sizeof(powerOff), HAL_MAX_DELAY);
-						}
+			{
+				HAL_UART_Transmit(&huart2, powerOff, sizeof(powerOff), HAL_MAX_DELAY);
+			}
 
 
 			//=============================================================================================
@@ -218,12 +230,22 @@ int main(void)
 			//=============================================================================================
 
 			else if(strcmp(argv[0],"pinout")==0)
-						{
-							HAL_UART_Transmit(&huart2, pinout, sizeof(pinout), HAL_MAX_DELAY);
-						}
+			{
+				HAL_UART_Transmit(&huart2, pinout, sizeof(pinout), HAL_MAX_DELAY);
+			}
 
 
 			//=============================================================================================
+			else if(strcmp(argv[0],"alpha")==0)
+						{
+							alphaValue1 = (atoi(argv[1])*TIM1->ARR)/100;
+							alphaValue2 = TIM1->ARR-alphaValue1;
+							TIM1->CCR1 = alphaValue1;
+							TIM1->CCR2 = alphaValue2;
+						}
+
+
+						//=============================================================================================
 
 
 			else{
@@ -310,8 +332,8 @@ static void MX_TIM1_Init(void)
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65535;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
+  htim1.Init.Period = 5312;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -327,7 +349,7 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
+  sConfigOC.Pulse = 1312;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -337,6 +359,7 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
+  sConfigOC.Pulse = 4000;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
@@ -344,7 +367,7 @@ static void MX_TIM1_Init(void)
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.DeadTime = 202;
   sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
   sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
   sBreakDeadTimeConfig.BreakFilter = 0;
@@ -464,9 +487,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GREEN_LED_GPIO_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(ISO_Reset_Pinout_GPIO_Port, ISO_Reset_Pinout_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : BLUE_BUTTON_Pin */
   GPIO_InitStruct.Pin = BLUE_BUTTON_Pin;
@@ -480,6 +507,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GREEN_LED_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : ISO_Reset_Pinout_Pin */
+  GPIO_InitStruct.Pin = ISO_Reset_Pinout_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(ISO_Reset_Pinout_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
