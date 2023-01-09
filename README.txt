@@ -23,4 +23,7 @@ COMMANDES :
 	
 	*"alpha" : permet de modifier la valeur d'alpha. La valeur donnée en argument correspond à la valeur désirée en %
 	
-	*"ADC" : renvoie la valeur moyenne du courant en ampère mesurée dans le moteur
+	*"ADC" : renvoie la valeur moyenne du courant en mA mesurée dans le moteur
+	
+	*"p" : fonction temporaire pour tester l'acquisition de la position relative du moteur. 
+			A approfondir, pour la prochaine séance on devrait s'en servir pour créer une fonction d'acquisition de vitesse
