@@ -44,6 +44,8 @@
 
 #define ADC_BUF_SIZE 20
 
+#define ENCODER_MEDIAN_VALUE 32768
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -58,6 +60,8 @@ DMA_HandleTypeDef hdma_adc2;
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
+TIM_HandleTypeDef htim5;
 
 UART_HandleTypeDef huart2;
 
@@ -78,9 +82,10 @@ uint32_t uartRxReceived;
 uint8_t uartRxBuffer[UART_RX_BUFFER_SIZE];
 uint8_t uartTxBuffer[UART_TX_BUFFER_SIZE];
 
-int alphaValue1=0;
-int alphaValue2=0;
+float alphaValue1 = 0;
+float alphaValue2 = 0;
 
+//Pour la mesure de courant
 uint16_t ADC1_buffer[ADC_BUF_SIZE];
 uint16_t ADC1_buffer_copy[ADC_BUF_SIZE];
 uint8_t flagADC1 = 0;
@@ -90,7 +95,21 @@ uint32_t ADC1ValueMoy = 0;
 float currentADC = 0;
 
 
-//uint8_t charADC[];
+//Pour la mesure de vitesse
+float speed = 0;
+int32_t encoderCounter = 0;
+
+
+//Pour l'asservissement en courant
+float alpha_current;
+float Ki_current = 1;
+float K_current =1;
+
+float alpha_ki_current = 50;
+float alpha_k_current = 50;
+float epsilon_current = 0;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -102,6 +121,8 @@ static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM4_Init(void);
+static void MX_TIM5_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -118,13 +139,15 @@ int __io_putchar(int ch)
 //TEST CODEUR EN POSITION
 //=================================================================
 
-uint32_t encoderCounter = 0;
-int16_t encoderPosition = 0;
+//int16_t encoderPosition = 0;
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-	encoderCounter = __HAL_TIM_GET_COUNTER(htim);
-	encoderPosition = (int16_t)encoderCounter;
+	if(htim == &htim3)
+	{
+		encoderCounter = __HAL_TIM_GET_COUNTER(htim);
+		//encoderPosition = (int16_t)encoderCounter;
+	}
 
 }
 //=================================================================
@@ -171,6 +194,8 @@ int main(void)
 	MX_TIM2_Init();
 	MX_ADC2_Init();
 	MX_TIM3_Init();
+	MX_TIM4_Init();
+	MX_TIM5_Init();
 	/* USER CODE BEGIN 2 */
 	memset(argv,NULL,MAX_ARGS*sizeof(char*));
 	memset(cmdBuffer,NULL,CMD_BUFFER_SIZE*sizeof(char));
@@ -198,7 +223,11 @@ int main(void)
 	if(HAL_OK != HAL_TIM_Encoder_Start_IT(&htim3, TIM_CHANNEL_ALL))
 		Error_Handler();
 
-	//QuickStart();
+	QuickStart();
+
+	HAL_TIM_Base_Start_IT(&htim4);
+	HAL_TIM_Base_Start_IT(&htim5);
+
 
 
 	/* USER CODE END 2 */
@@ -330,23 +359,8 @@ int main(void)
 			//=============================================================================================
 			else if(strcmp(argv[0],"ADC")==0)
 			{
-				//charADC[]="Command not found\r\n";
-				//HAL_UART_Transmit(&huart2, currentADC, sizeof(currentADC), HAL_MAX_DELAY);
-
-				ADC1ValueMoy = 0;
-				for(idxADC1bis=0 ; idxADC1bis < ADC_BUF_SIZE ; idxADC1bis++)
-				{
-					//printf("Moy : %d\r\n", ADC1ValueMoy);
-
-					ADC1ValueMoy = ADC1ValueMoy + ADC1_buffer_copy[idxADC1bis];
-				}
-				//printf("Moy Totale : %d\r\n", ADC1ValueMoy);
-				ADC1ValueMoy = ADC1ValueMoy/ADC_BUF_SIZE;
-				//printf("MoyFinale : %d\r\n", ADC1ValueMoy);
-
-				CurrentCalcul(ADC1ValueMoy);
+				GetCurrent();
 				printf("Courant moteur:%.3f mA\r\n", currentADC);
-
 			}
 
 
@@ -354,10 +368,14 @@ int main(void)
 
 			else if(strcmp(argv[0],"p")==0)
 			{
+				printf("Pos : %d\r\n", encoderCounter );
+			}
 
-				printf("Pos : %d\r\n", encoderPosition );
+			//=============================================================================================
 
-
+			else if(strcmp(argv[0],"speed")==0)
+			{
+				printf("Speed : %f\r\n",speed);
 			}
 
 			//=============================================================================================
@@ -582,7 +600,7 @@ static void MX_TIM2_Init(void)
 	htim2.Instance = TIM2;
 	htim2.Init.Prescaler = 0;
 	htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-	htim2.Init.Period = 6000;
+	htim2.Init.Period = 65535;
 	htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
 	htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
 	if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -631,11 +649,11 @@ static void MX_TIM3_Init(void)
 	htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
 	htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
 	sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
-	sConfig.IC1Polarity = TIM_ICPOLARITY_FALLING;
+	sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
 	sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
 	sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
 	sConfig.IC1Filter = 0;
-	sConfig.IC2Polarity = TIM_ICPOLARITY_FALLING;
+	sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
 	sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
 	sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
 	sConfig.IC2Filter = 0;
@@ -652,6 +670,96 @@ static void MX_TIM3_Init(void)
 	/* USER CODE BEGIN TIM3_Init 2 */
 
 	/* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
+ * @brief TIM4 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM4_Init(void)
+{
+
+	/* USER CODE BEGIN TIM4_Init 0 */
+
+	/* USER CODE END TIM4_Init 0 */
+
+	TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+	TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+	/* USER CODE BEGIN TIM4_Init 1 */
+
+	/* USER CODE END TIM4_Init 1 */
+	htim4.Instance = TIM4;
+	htim4.Init.Prescaler = 169;
+	htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim4.Init.Period = 9999;
+	htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+	if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+	if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM4_Init 2 */
+
+	/* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
+ * @brief TIM5 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM5_Init(void)
+{
+
+	/* USER CODE BEGIN TIM5_Init 0 */
+
+	/* USER CODE END TIM5_Init 0 */
+
+	TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+	TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+	/* USER CODE BEGIN TIM5_Init 1 */
+
+	/* USER CODE END TIM5_Init 1 */
+	htim5.Instance = TIM5;
+	htim5.Init.Prescaler = 169;
+	htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim5.Init.Period = 999;
+	htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_Base_Init(&htim5) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+	if (HAL_TIM_ConfigClockSource(&htim5, &sClockSourceConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM5_Init 2 */
+
+	/* USER CODE END TIM5_Init 2 */
 
 }
 
@@ -773,7 +881,32 @@ void HAL_UART_RxCpltCallback (UART_HandleTypeDef * huart){
 	HAL_UART_Receive_IT(&huart2, uartRxBuffer, UART_RX_BUFFER_SIZE);
 }
 
-void START_PWM()
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if(htim == &htim4)
+	{
+		SpeedCalc();
+	}
+}
+
+/*void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if(htim == &htim5)
+	{
+		alpha_current = AsservCurrentStep();
+		Set_Alpha(alpha_current)
+	}
+}*/
+
+
+
+/**
+ * @brief Start PWM
+ * @Note Cette fonction permet de démarrer les 4 signaux PWM nécessaires au fonctionnement du moteur
+ * @param None
+ * @retval None
+ */
+void START_PWM(void)
 {
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
@@ -781,20 +914,34 @@ void START_PWM()
 	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
 }
 
+
+/**
+ * @brief Set Alpha
+ * @Note Cette fonction permet de modifier la valeur du rapport cyclique de nos signaux PWM (en %)
+ * @param int alpha : valeur comprise entre 0 et 100
+ * @retval None
+ */
 void Set_Alpha(int _alpha)
 {
 
 	alphaValue1 = (_alpha*TIM1->ARR)/100;
-	alphaValue2 = TIM1->ARR-alphaValue1;
-	TIM1->CCR1 = alphaValue1;
-	TIM1->CCR2 = alphaValue2;
+	alphaValue2 = TIM1->ARR - alphaValue1;
+	TIM1->CCR1 = (int) alphaValue1;
+	TIM1->CCR2 = (int) alphaValue2;
 
 }
 
-void QuickStart()
+
+/**
+ * @brief Quick Start
+ * @Note Permet de démarrer rapidement le moteur avec un rapport cyclique de 60%
+ * @param None
+ * @retval None
+ */
+void QuickStart(void)
 {
 	START_PWM();
-	Set_Alpha(60);
+	Set_Alpha(56.0);
 
 }
 
@@ -803,10 +950,72 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 	flagADC1 = 1;
 }
 
+void GetCurrent()
+{
+	ADC1ValueMoy = 0;
+	for(idxADC1bis=0 ; idxADC1bis < ADC_BUF_SIZE ; idxADC1bis++)
+	{
+		//printf("Moy : %d\r\n", ADC1ValueMoy);
+
+		ADC1ValueMoy = ADC1ValueMoy + ADC1_buffer_copy[idxADC1bis];
+	}
+	//printf("Moy Totale : %d\r\n", ADC1ValueMoy);
+	ADC1ValueMoy = ADC1ValueMoy/ADC_BUF_SIZE;
+	//printf("MoyFinale : %d\r\n", ADC1ValueMoy);
+
+	CurrentCalcul(ADC1ValueMoy);
+	//printf("Courant moteur:%.3f mA\r\n", currentADC);
+}
+
+/**
+ * @brief Current Calcul
+ * @Note Envoie dans la variable currentADC la valeur convertie du courant moteur en mA
+ * @param uint32_t moy : moyenne des valeurs brutes contenues dans le buffer de l'ADC
+ * @retval None
+ */
 void CurrentCalcul(uint32_t moy)
 {
 	currentADC = 1000*(moy/4095.0)*3.3;
 	currentADC = (currentADC-2500)*12;
+}
+
+/**
+ * @brief Speed Calcul
+ * @Note Envoie dans la variable speed la valeur convertie de la vitesse de rotation du moteur en tr/s
+ * @param None
+ * @retval None
+ */
+void SpeedCalc()
+{
+	encoderCounter = __HAL_TIM_GET_COUNTER(&htim3);
+	speed = (ENCODER_MEDIAN_VALUE - encoderCounter)/0.01/4095;
+	__HAL_TIM_SET_COUNTER(&htim3,ENCODER_MEDIAN_VALUE);
+}
+
+int AsservCurrentStep(float I_consigne)
+{
+	float newAlpha_ki;
+	float newAlpha_k;
+	float newEpsilon;
+	float newAlpha;
+
+	GetCurrent();
+	newEpsilon = I_consigne - currentADC;
+
+	newAlpha_k = newEpsilon * K_current;
+	newAlpha_ki = alpha_ki_current + (Ki_current*0.001/2)*(newEpsilon + epsilon_current);   //0.001 car fréquence de timer de 1kHz
+
+	newAlpha = newAlpha_k + newAlpha_ki;
+
+	alpha_ki_current = newAlpha_ki;
+	epsilon_current = newEpsilon;
+
+	return (int)newAlpha;
+
+
+
+
+
 }
 
 /* USER CODE END 4 */
