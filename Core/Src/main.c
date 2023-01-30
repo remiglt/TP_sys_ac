@@ -94,7 +94,6 @@ uint8_t idxADC1bis = 0;
 uint32_t ADC1ValueMoy = 0;
 float currentADC = 0;
 
-
 //Pour la mesure de vitesse
 float speed = 0;
 int32_t encoderCounter = 0;
@@ -102,13 +101,16 @@ int32_t encoderCounter = 0;
 
 //Pour l'asservissement en courant
 float alpha_current;
-float Ki_current = 1;
-float K_current =1;
+float Ki_current = 0.127;
+float K_current =2.25;
 
 float alpha_ki_current = 50;
 float alpha_k_current = 50;
 float epsilon_current = 0;
 
+float newalpha = 0;
+
+float alpha;
 
 /* USER CODE END PV */
 
@@ -243,12 +245,14 @@ int main(void)
 			for(idxADC1=0;idxADC1< ADC_BUF_SIZE; idxADC1++)
 			{
 				ADC1_buffer_copy[idxADC1] = ADC1_buffer[idxADC1];
+
 				//printf("ADC1_buffer : %d\r\n", ADC1_buffer[idxADC1bis]);
 				//ADC1ValueMoy = ADC1ValueMoy + ADC1_buffer[idxADC1];
 			}
-			//ADC1ValueMoy = ADC1ValueMoy/ADC_BUF_SIZE;
-			//CurrentCalcul(ADC1ValueMoy);
 
+			//ADC1ValueMoy = ADC1ValueMoy/ADC_BUF_SIZE;
+			AsservCurrentStep(500);
+			alpha = newalpha;
 
 			//HAL_ADC_Start_DMA(&hadc1, ADC1_buffer, ADC_BUF_SIZE);
 
@@ -365,28 +369,28 @@ int main(void)
 
 
 			//=============================================================================================
-
 			else if(strcmp(argv[0],"p")==0)
 			{
-				printf("Pos : %d\r\n", encoderCounter );
+				printf("Pos : %d\r\n", encoderCounter);
 			}
 
 			//=============================================================================================
-
 			else if(strcmp(argv[0],"speed")==0)
 			{
 				printf("Speed : %f\r\n",speed);
 			}
 
 			//=============================================================================================
+			else if(strcmp(argv[0],"newalpha")==0)
+			{
+				printf("New alpha : %f\r\n",alpha);
+			}
 
+			//=============================================================================================
 			else{
 				HAL_UART_Transmit(&huart2, cmdNotFound, sizeof(cmdNotFound), HAL_MAX_DELAY);
 
 			}
-
-
-
 
 			HAL_UART_Transmit(&huart2, prompt, sizeof(prompt), HAL_MAX_DELAY);
 			newCmdReady = 0;
@@ -950,8 +954,9 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 	flagADC1 = 1;
 }
 
-void GetCurrent()
+int GetCurrent()
 {
+	int current;
 	ADC1ValueMoy = 0;
 	for(idxADC1bis=0 ; idxADC1bis < ADC_BUF_SIZE ; idxADC1bis++)
 	{
@@ -963,7 +968,8 @@ void GetCurrent()
 	ADC1ValueMoy = ADC1ValueMoy/ADC_BUF_SIZE;
 	//printf("MoyFinale : %d\r\n", ADC1ValueMoy);
 
-	CurrentCalcul(ADC1ValueMoy);
+	current = CurrentCalcul(ADC1ValueMoy);
+	return (int) current;
 	//printf("Courant moteur:%.3f mA\r\n", currentADC);
 }
 
@@ -973,10 +979,11 @@ void GetCurrent()
  * @param uint32_t moy : moyenne des valeurs brutes contenues dans le buffer de l'ADC
  * @retval None
  */
-void CurrentCalcul(uint32_t moy)
+int CurrentCalcul(uint32_t moy)
 {
 	currentADC = 1000*(moy/4095.0)*3.3;
 	currentADC = (currentADC-2500)*12;
+	return (int) currentADC;
 }
 
 /**
@@ -992,29 +999,51 @@ void SpeedCalc()
 	__HAL_TIM_SET_COUNTER(&htim3,ENCODER_MEDIAN_VALUE);
 }
 
-int AsservCurrentStep(float I_consigne)
+void AsservCurrentStep(float I_consigne)
 {
 	float newAlpha_ki;
 	float newAlpha_k;
 	float newEpsilon;
-	float newAlpha;
 
 	GetCurrent();
 	newEpsilon = I_consigne - currentADC;
 
 	newAlpha_k = newEpsilon * K_current;
+
 	newAlpha_ki = alpha_ki_current + (Ki_current*0.001/2)*(newEpsilon + epsilon_current);   //0.001 car fréquence de timer de 1kHz
 
-	newAlpha = newAlpha_k + newAlpha_ki;
-
-	alpha_ki_current = newAlpha_ki;
-	epsilon_current = newEpsilon;
-
-	return (int)newAlpha;
+	newalpha = newAlpha_k + newAlpha_ki;
 
 
+	//saturation
 
+	if(newalpha>1)
+	{
+		newalpha=1;
 
+	} else if(newalpha<0){
+
+		newalpha=0;
+	}
+
+	//chargement alpha
+
+	//anti-wind-up
+
+	if(newAlpha_ki>1)
+	{
+		alpha_ki_current = 1;
+
+	} else if(newAlpha_ki<0){
+
+		alpha_ki_current =0;
+
+	} else {
+
+		alpha_ki_current = newAlpha_ki;
+	}
+
+	epsilon_current = newEpsilon; 	//chargement epsilon
 
 }
 
